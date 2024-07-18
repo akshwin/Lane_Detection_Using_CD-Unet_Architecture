@@ -1,7 +1,9 @@
 # Lane Detection Using U-Net
 
 This project aims to detect lanes in images using a U-Net model. The dataset used for this project is the TuSimple Preprocessed dataset. The project involves data preprocessing, model training, and evaluation.
-![Lane Detection Example](https://i.ytimg.com/vi/KzRkS-8oNtc/maxresdefault.jpg)
+
+
+<img align = 'center' src="https://i.ytimg.com/vi/KzRkS-8oNtc/maxresdefault.jpg" alt="Lane Detection Example" width="500"/>
 
 ## Table of Contents
 - [Prerequisites](#prerequisites)
