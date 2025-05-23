@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lane Detection</title>
+
+    <!-- Favicon -->
+    <link rel="icon" href="https://www.flaticon.com/free-icons/road" type="image/x-icon" />
+
+    <!-- Bootstrap CSS -->
+    <link
+      rel="stylesheet"
+      href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css"
+      integrity="sha384-ggOyR0iXCbMQv3Xipma34MD+dH/1fQ784/j6cY/iJTQUOhcWr7x9JvoRxT2MZw1T"
+      crossorigin="anonymous"
+    />
+
+    <!-- Google Font -->
+    <link
+      href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;600&display=swap"
+      rel="stylesheet"
+    />
+
+    <style>
+      body {
+        background: linear-gradient(to right, #1f2a44, #4e627a);
+        color: #f8f9fa;
+        font-family: 'Rubik', sans-serif;
+        min-height: 100vh;
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+      }
+
+      nav {
+        background-color: #343a40; /* Set navbar color */
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.5);
+      }
+
+      h1 {
+        font-size: 48px;
+        font-weight: 600;
+        color: #f1f1f1;
+      }
+
+      .tagline {
+        font-size: 18px;
+        color: #adb5bd;
+        margin-top: -10px;
+      }
+
+      .lead {
+        font-size: 20px;
+        color: #ced4da;
+      }
+
+      .centered-wrapper {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        padding-bottom: 30px;
+      }
+
+      .upload-section {
+        background-color: #ffffff;
+        border-radius: 10px;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        padding: 30px;
+        max-width: 700px;
+        width: 100%;
+        text-align: center;
+        border: 2px solid #17a2b8;
+      }
+
+      /* Custom File Upload Button */
+      .custom-file-label {
+        display: block;
+        font-size: 16px;
+        font-weight: 600;
+        color: #fff;
+        background-color: #17a2b8;
+        border: 2px solid #17a2b8;
+        border-radius: 10px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        width: 60%; /* Keeps the button width smaller than the 'Predict Lane' button */
+        margin: 0 auto; /* Centers the button */
+      }
+
+      .custom-file-label:hover {
+        background-color: #138496;
+        border-color: #138496;
+      }
+
+      .custom-file-input:focus + .custom-file-label {
+        box-shadow: 0 0 10px rgba(23, 162, 184, 0.7);
+        outline: none;
+      }
+
+      .upload-btn {
+        border-radius: 10px;
+        background-color: #17a2b8;
+        border: none;
+        color: white;
+        padding: 12px 24px;
+        font-weight: 600;
+        transition: all 0.3s ease;
+        width: 60%; /* Make this button a little wider than the 'Choose Image' button */
+        margin: 0 auto;
+      }
+
+      .upload-btn:hover {
+        background-color: #138496;
+        transform: translateY(-2px);
+      }
+
+      .image-container img {
+        max-width: 100%;
+        height: auto;
+        border-radius: 10px;
+        margin-top: 20px;
+      }
+
+      .mask-result {
+        margin-top: 40px;
+        text-align: center;
+      }
+
+      .mask-result .row {
+        display: flex;
+        justify-content: space-around;
+        align-items: center;
+      }
+
+      .mask-result .col img {
+        width: 100%;
+        height: 300px;
+        object-fit: cover;
+        border-radius: 10px;
+      }
+
+      footer {
+        text-align: center;
+        padding: 15px 0;
+        color: #868e96;
+        font-size: 14px;
+        margin-top: auto;
+      }
+
+      /* Flexbox container to align buttons left and right */
+      .button-container {
+        display: flex;
+        justify-content: space-between;
+        width: 100%;
+        margin-top: 20px;
+      }
+
+      .button-container .custom-file-label,
+      .button-container .upload-btn {
+        width: 48%; /* Adjust width so they don't overlap */
+      }
+    </style>
+  </head>
+
+  <body>
+    <!-- Navbar -->
+    <nav class="navbar navbar-expand-lg navbar-dark fixed-top">
+      <div class="container">
+        <a class="navbar-brand mx-auto" href="#">
+          <strong>Lane Detection AI</strong>
+        </a>
+      </div>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="container centered-wrapper">
+      <h1 class="text-center">Lane Detection Web Application</h1>
+      <p class="tagline text-center">"Upload a road image to detect the lane !"</p>  
+
+      <!-- Upload Section -->
+      <div class="upload-section">
+        <form type="upload" method="POST" enctype="multipart/form-data">
+          <div class="custom-file">
+            <input
+              type="file"
+              name="file"
+              accept="image/*"
+              class="custom-file-input"
+              id="customFile"
+              required
+            />
+            <label class="custom-file-label" for="customFile">Choose Image</label>
+          </div>
+
+          <!-- Button Container for left and right positioning -->
+          <div class="button-container">
+            <button type="submit" class="custom-file-label">Choose Image</button>
+            
+            <button type="submit" class="upload-btn btn btn-outline-primary btn-block">
+              Predict Lane
+            </button>
+          </div>
+        </form>
+
+        <!-- Status Message -->
+        <div id="status-message" class="mt-3 text-info font-weight-bold"></div>
+      </div>
+
+      <!-- Results Section -->
+      {% if uploaded %}
+      <div class="mask-result">
+        <h3>Prediction Results:</h3>
+        <div class="row">
+          <div class="col">
+            <h4>Original Image</h4>
+            <img src="{{ img_path }}" alt="Uploaded Image" />
+          </div>
+          <div class="col">
+            <h4>Predicted Lane </h4>
+            <img src="{{ mask_path }}" alt="Predicted Lane Mask" />
+          </div>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- Footer -->
+    <footer>
+      &copy; 2025 Lane Detection AI. All rights reserved. | Created by Akshwin T 
+    </footer>
+
+    <!-- Bootstrap JS -->
+    <script
+      src="https://code.jquery.com/jquery-3.5.1.slim.min.js"
+      integrity="sha384-DfXdz2htPH0lsSSs5nCTpuj/zyAYVSZl5VvJzAJc6A5/4jRFp6X4QsF8/8+0T1aT"
+      crossorigin="anonymous"
+    ></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.9.1/dist/umd/popper.min.js"
+    ></script>
+    <script
+      src="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.min.js"
+      integrity="sha384-JjSmVgyd0p3pXB1rRibZUAYoIIy6OrQ6VrjIEaFf/nJGzIxFDsf4x0xIM+B07jRM"
+      crossorigin="anonymous"
+    ></script>
+
+    <!-- Upload Status Script -->
+    <script>
+      const form = document.querySelector('form');
+      const statusMessage = document.getElementById('status-message');
+
+      form.addEventListener('submit', function () {
+        statusMessage.textContent = 'Predicting...';
+        statusMessage.classList.remove('text-success');
+        statusMessage.classList.add('text-info');
+      });
+
+      // When the page loads after upload, show 'Uploaded!'
+      window.addEventListener('load', () => {
+        {% if uploaded %}
+          statusMessage.textContent = 'Predicted!';
+          statusMessage.classList.remove('text-info');
+          statusMessage.classList.add('text-success');
+        {% endif %}
+      });
+    </script>
+  </body>
+</html>
