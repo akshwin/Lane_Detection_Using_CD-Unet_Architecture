@@ -3,3 +3,4 @@ numpy
 tensorflow
 Pillow
 matplotlib
+gunicorn
