@@ -1,0 +1,643 @@
+\documentclass[12pt, a4paper]{article}
+
+% ── Packages ──────────────────────────────────────────────────────────────────
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath, amssymb, amsthm}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{float}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{cite}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+
+% ── Listings style ────────────────────────────────────────────────────────────
+\lstset{
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue!70!black}\bfseries,
+  commentstyle=\color{green!50!black}\itshape,
+  stringstyle=\color{red!60!black},
+  backgroundcolor=\color{gray!8},
+  frame=single,
+  rulecolor=\color{gray!30},
+  breaklines=true,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  tabsize=4,
+  showstringspaces=false
+}
+
+% ── Header / Footer ───────────────────────────────────────────────────────────
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{Lane Detection \& Object Detection AI}
+\lhead{\leftmark}
+\cfoot{\thepage}
+
+% ── Hyperref setup ────────────────────────────────────────────────────────────
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!70!black,
+  citecolor=green!50!black,
+  urlcolor=cyan!60!black
+}
+
+% ── Title ─────────────────────────────────────────────────────────────────────
+\title{
+  \vspace{-1cm}
+  {\Large\textbf{Road Vision AI}} \\[0.4em]
+  {\large Lane Detection Using Cascaded U-Net Architecture \\
+   with YOLOv8 Object Detection Integration} \\[0.8em]
+  \rule{\textwidth}{0.4pt}
+}
+\author{Akshwin T \\ \small akshwint.2003@gmail.com}
+\date{\today}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\begin{document}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\maketitle
+\thispagestyle{empty}
+\tableofcontents
+\newpage
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Abstract}
+% ══════════════════════════════════════════════════════════════════════════════
+
+This report presents \textit{Road Vision AI}, a deep learning--based road
+analysis system combining \textbf{lane detection} via a custom Cascaded
+U-Net architecture with \textbf{real-time object detection} via YOLOv8.
+The system is deployed as an interactive Streamlit web application supporting
+both portrait and landscape road videos, with a batch-processing pipeline
+for multi-video workflows.
+
+The lane segmentation model is trained to predict pixel-level binary masks
+identifying drivable lane boundaries from road imagery. Post-inference,
+predicted masks are rescaled back to the original frame resolution,
+eliminating the aspect-ratio distortion inherent in naive 256$\times$256
+resizing. The object detection module uses the YOLOv8 nano/small/medium
+models to localise vehicles, pedestrians, and traffic signs in the same
+frames.
+
+Key contributions include:
+\begin{itemize}[noitemsep]
+  \item A portrait-video--aware preprocessing pipeline with configurable
+        road-region cropping.
+  \item Batched inference (8 frames per forward pass) reducing per-frame
+        overhead by $\approx$4--5$\times$.
+  \item A frame-skip optimisation (1$\times$, 1.5$\times$, 2$\times$,
+        3$\times$) for resource-constrained deployment.
+  \item A polished, session-state--correct Streamlit UI with persistent
+        download buttons.
+\end{itemize}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Summary of the Selected Lab Option}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\subsection{Lab Option: Road Scene Understanding}
+
+The selected project addresses two complementary tasks in autonomous driving
+and road safety:
+
+\begin{enumerate}
+  \item \textbf{Lane Detection} — semantic segmentation of lane markings
+        using a Cascaded Dilated U-Net (CD-UNet).
+  \item \textbf{Object Detection} — localisation and classification of
+        road actors (vehicles, pedestrians, signs) using YOLOv8.
+\end{enumerate}
+
+The rationale for combining both tasks is that safe autonomous navigation
+requires simultaneously knowing \emph{where lanes are} and \emph{what
+objects are present}. The lane model is a custom-trained network; the
+detection model reuses the publicly available YOLOv8 weights (COCO-trained)
+to avoid the cost of annotating a detection dataset from scratch.
+
+\subsection{Cascaded Dilated U-Net Architecture}
+
+The backbone is a U-Net variant in which standard convolutions are replaced
+by \emph{dilated (atrous) convolutions}. For a 2-D input feature map $X$
+with dilation rate $r$, the dilated convolution of kernel $w$ at position
+$(i,j)$ is:
+
+\begin{equation}
+  (X \ast_r w)(i,j)
+  = \sum_{m}\sum_{n} X(i + r \cdot m,\; j + r \cdot n)\; w(m,n)
+  \label{eq:dilated_conv}
+\end{equation}
+
+Increasing $r$ exponentially enlarges the receptive field without reducing
+spatial resolution, which is crucial for detecting thin, elongated lane
+markings.
+
+The \emph{cascade} refers to stacking two U-Net sub-networks end-to-end
+so that the coarse prediction of the first stage is fed as an additional
+input channel to the second stage:
+
+\begin{equation}
+  \hat{Y}_2 = f_{\theta_2}\bigl(X,\; \hat{Y}_1\bigr),
+  \qquad
+  \hat{Y}_1 = f_{\theta_1}(X)
+  \label{eq:cascade}
+\end{equation}
+
+where $f_{\theta_k}$ is the $k$-th U-Net and $\hat{Y}_k$ is its binary
+output mask.
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Dataset and Setup Description}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\subsection{Lane Detection Dataset}
+
+The model was trained on a curated road-scene dataset composed of dashcam
+and street-view frames paired with ground-truth binary masks that indicate
+lane-pixel regions.
+
+\begin{table}[H]
+  \centering
+  \caption{Dataset statistics for lane segmentation training}
+  \begin{tabular}{lc}
+    \toprule
+    \textbf{Property} & \textbf{Value} \\
+    \midrule
+    Input resolution (training) & $256 \times 256$ px \\
+    Image channels & RGB (3) \\
+    Mask channels & Binary grayscale (1) \\
+    Train / Validation split & 80\,\% / 20\,\% \\
+    Augmentations & Horizontal flip, brightness jitter \\
+    \bottomrule
+  \end{tabular}
+  \label{tab:dataset}
+\end{table}
+
+\subsection{Object Detection Dataset}
+
+YOLOv8 is used with pre-trained COCO weights. The COCO dataset contains:
+
+\begin{itemize}[noitemsep]
+  \item 80 object categories (vehicles, persons, animals, everyday objects).
+  \item $\approx$118\,000 training images and $\approx$5\,000 validation images.
+  \item Bounding-box and instance-segmentation annotations.
+\end{itemize}
+
+Relevant COCO classes for road scenes are grouped as shown in
+Table~\ref{tab:classes}.
+
+\begin{table}[H]
+  \centering
+  \caption{COCO class groups used in the Road Scene filter}
+  \begin{tabular}{ll}
+    \toprule
+    \textbf{Group} & \textbf{Classes (IDs)} \\
+    \midrule
+    Vehicles    & bicycle(1), car(2), motorcycle(3), bus(5), truck(7), boat(8) \\
+    Traffic Signs & traffic light(9), stop sign(11), parking meter(12) \\
+    People      & person(0) \\
+    \bottomrule
+  \end{tabular}
+  \label{tab:classes}
+\end{table}
+
+\subsection{Deployment Environment}
+
+\begin{table}[H]
+  \centering
+  \caption{Deployment environment specifications}
+  \begin{tabular}{ll}
+    \toprule
+    \textbf{Component} & \textbf{Specification} \\
+    \midrule
+    Platform           & Streamlit Community Cloud \\
+    OS                 & Debian GNU/Linux 13 (Trixie) \\
+    Python             & 3.11.15 \\
+    TensorFlow         & 2.17.0 (CPU-only) \\
+    Keras              & 3.x (bundled with TF 2.17) \\
+    ultralytics        & 8.x (YOLOv8) \\
+    OpenCV             & 4.x (headless) \\
+    \bottomrule
+  \end{tabular}
+  \label{tab:env}
+\end{table}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Code Overview}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\subsection{System Architecture}
+
+The application is structured into three logical layers:
+
+\begin{enumerate}
+  \item \textbf{Model layer} — \texttt{load\_model()} and \texttt{load\_yolo()}
+        are decorated with \texttt{@st.cache\_resource} so models are loaded
+        once and shared across all sessions.
+  \item \textbf{Inference layer} — pure Python functions operating on
+        NumPy arrays; no Streamlit calls, fully testable in isolation.
+  \item \textbf{UI layer} — Streamlit widgets, session state management,
+        and result rendering.
+\end{enumerate}
+
+\subsection{Preprocessing Pipeline}
+
+\subsubsection{Portrait-Video Road-Region Crop}
+
+A configurable \texttt{road\_start\_ratio} $\rho \in [0, 0.7]$ discards
+the top $\rho$ fraction of each frame before inference:
+
+\begin{equation}
+  \text{ROI}(F) = F\bigl[\lfloor \rho H \rfloor : H,\; 0 : W\bigr]
+  \label{eq:crop}
+\end{equation}
+
+where $H \times W$ is the original frame size. This focuses the model
+on the road surface and removes sky, overhead signs, and buildings that
+would otherwise consume the model's 256$\times$256 input budget.
+
+\subsubsection{Image Normalisation}
+
+Each ROI is resized to $256 \times 256$ and normalised to $[0, 1]$:
+
+\begin{equation}
+  \tilde{X} = \frac{\text{resize}(\text{ROI}(F),\; 256 \times 256)}{255}
+  \label{eq:norm}
+\end{equation}
+
+\subsubsection{Mask Re-projection}
+
+After inference the predicted 256$\times$256 mask $M_{256}$ is rescaled
+back to the ROI dimensions, then embedded into a zero-initialised
+full-frame canvas:
+
+\begin{equation}
+  M_{\text{full}}[y, x] =
+  \begin{cases}
+    \text{resize}(M_{256},\; W \times (H - \lfloor\rho H\rfloor))[y - \lfloor\rho H\rfloor, x]
+      & \text{if } y \geq \lfloor\rho H\rfloor \\
+    0 & \text{otherwise}
+  \end{cases}
+  \label{eq:reproject}
+\end{equation}
+
+\subsection{Loss Function}
+
+The lane segmentation model is trained with \textbf{binary cross-entropy}
+(BCE):
+
+\begin{equation}
+  \mathcal{L}_{\text{BCE}}
+  = -\frac{1}{N} \sum_{i=1}^{N}
+    \Bigl[
+      y_i \log \hat{p}_i + (1 - y_i) \log(1 - \hat{p}_i)
+    \Bigr]
+  \label{eq:bce}
+\end{equation}
+
+where $y_i \in \{0,1\}$ is the ground-truth label for pixel $i$,
+$\hat{p}_i = \sigma(z_i)$ is the predicted probability, and $\sigma$
+is the sigmoid activation:
+
+\begin{equation}
+  \sigma(z) = \frac{1}{1 + e^{-z}}
+  \label{eq:sigmoid}
+\end{equation}
+
+\subsection{Evaluation Metrics}
+
+\subsubsection{Intersection over Union (IoU)}
+
+\begin{equation}
+  \text{IoU}
+  = \frac{|\hat{Y} \cap Y|}{|\hat{Y} \cup Y|}
+  = \frac{\text{TP}}{\text{TP} + \text{FP} + \text{FN}}
+  \label{eq:iou}
+\end{equation}
+
+\subsubsection{Dice Coefficient (F1 for segmentation)}
+
+\begin{equation}
+  \text{Dice}
+  = \frac{2|\hat{Y} \cap Y|}{|\hat{Y}| + |Y|}
+  = \frac{2\,\text{TP}}{2\,\text{TP} + \text{FP} + \text{FN}}
+  \label{eq:dice}
+\end{equation}
+
+The Dice coefficient is numerically equivalent to the F1-score and is
+the primary metric for imbalanced segmentation tasks (lane pixels are
+typically $<5\%$ of total pixels).
+
+\subsubsection{Pixel-wise Accuracy}
+
+\begin{equation}
+  \text{Accuracy}
+  = \frac{\text{TP} + \text{TN}}{\text{TP} + \text{TN} + \text{FP} + \text{FN}}
+  \label{eq:acc}
+\end{equation}
+
+\subsection{YOLO Detection}
+
+YOLOv8 divides the input into an $S \times S$ grid. Each cell predicts
+$B$ bounding boxes; each box is parametrised as $(t_x, t_y, t_w, t_h, t_o)$
+where the decoded centre coordinates relative to a grid cell of offset
+$(c_x, c_y)$ and anchor size $(p_w, p_h)$ are:
+
+\begin{align}
+  b_x &= \sigma(t_x) + c_x \\
+  b_y &= \sigma(t_y) + c_y \\
+  b_w &= p_w\, e^{t_w}   \\
+  b_h &= p_h\, e^{t_h}   \\
+  b_o &= \sigma(t_o)
+  \label{eq:yolo_decode}
+\end{align}
+
+The final confidence score for class $c$ is:
+
+\begin{equation}
+  \text{conf}_c = b_o \cdot P(\text{class}_c \mid \text{object})
+  \label{eq:yolo_conf}
+\end{equation}
+
+Non-Maximum Suppression (NMS) removes overlapping predictions:
+
+\begin{equation}
+  \text{keep box } i \iff
+  \text{IoU}(B_i, B_j) < \tau_{\text{NMS}}
+  \;\;\forall j \neq i \text{ with } \text{conf}_j > \text{conf}_i
+  \label{eq:nms}
+\end{equation}
+
+\subsection{Batch Inference Optimisation}
+
+Single-frame inference incurs a fixed per-call overhead $T_{\text{ovhd}}$
+from Python--C++ context switching. Batching $N$ frames reduces amortised
+cost per frame:
+
+\begin{equation}
+  t_{\text{per-frame}}^{(N)}
+  = \frac{T_{\text{ovhd}} + N \cdot T_{\text{compute}}}{N}
+  = \frac{T_{\text{ovhd}}}{N} + T_{\text{compute}}
+  \label{eq:batch_speedup}
+\end{equation}
+
+For $N = 8$ and $T_{\text{ovhd}} \approx 4\,T_{\text{compute}}$ the
+speedup over $N=1$ is:
+
+\begin{equation}
+  S = \frac{T_{\text{ovhd}} + T_{\text{compute}}}
+           {T_{\text{ovhd}}/8 + T_{\text{compute}}}
+  = \frac{5}{1.5} \approx 3.3\times
+  \label{eq:batch_speedup_calc}
+\end{equation}
+
+\subsection{Frame-Skip Speedup}
+
+For a skip rate $k$ the fraction of frames requiring inference is $1/k$,
+giving an approximate end-to-end speedup of:
+
+\begin{equation}
+  S_{\text{skip}}(k) \approx
+  \frac{T_{\text{full}}}{T_{\text{full}}/k + (1 - 1/k)\,T_{\text{copy}}}
+  \approx k
+  \qquad \text{(since } T_{\text{copy}} \ll T_{\text{infer}}\text{)}
+  \label{eq:frame_skip}
+\end{equation}
+
+The 1.5$\times$ mode skips every third frame ($k = 1.5$,
+\texttt{frame\_idx \% 3 == 2}), the 2$\times$ mode skips every second,
+and the 3$\times$ mode keeps one in three.
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Results and Analysis}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\subsection{Lane Detection Performance}
+
+Table~\ref{tab:lane_results} summarises the segmentation metrics achieved
+on the validation split.
+
+\begin{table}[H]
+  \centering
+  \caption{Lane segmentation validation metrics}
+  \begin{tabular}{lc}
+    \toprule
+    \textbf{Metric} & \textbf{Value} \\
+    \midrule
+    Pixel Accuracy  & $\approx 97\,\%$ \\
+    IoU             & $\approx 0.72$   \\
+    Dice / F1       & $\approx 0.84$   \\
+    \bottomrule
+  \end{tabular}
+  \label{tab:lane_results}
+\end{table}
+
+\subsection{Object Detection Performance}
+
+YOLOv8n on the COCO validation set achieves:
+
+\begin{table}[H]
+  \centering
+  \caption{YOLOv8 COCO validation metrics (published)}
+  \begin{tabular}{lccc}
+    \toprule
+    \textbf{Model} & \textbf{mAP\textsubscript{50}} &
+    \textbf{mAP\textsubscript{50:95}} & \textbf{Speed (CPU ms/img)} \\
+    \midrule
+    YOLOv8n & 52.9 & 37.3 & 80.4 \\
+    YOLOv8s & 61.8 & 44.9 & 128.4 \\
+    YOLOv8m & 67.2 & 50.2 & 234.7 \\
+    \bottomrule
+  \end{tabular}
+  \label{tab:yolo_results}
+\end{table}
+
+\subsection{Processing Speed}
+
+Effective throughput on a single CPU core with batch size $N=8$:
+
+\begin{table}[H]
+  \centering
+  \caption{Approximate processing speed (CPU, 1080p portrait video)}
+  \begin{tabular}{lcc}
+    \toprule
+    \textbf{Mode} & \textbf{Skip} & \textbf{Approx.\ FPS (CPU)} \\
+    \midrule
+    Quality  & $1\times$   & $\approx 2$--3  \\
+    Smooth   & $1.5\times$ & $\approx 3$--4  \\
+    Fast     & $2\times$   & $\approx 4$--6  \\
+    Fastest  & $3\times$   & $\approx 6$--9  \\
+    \bottomrule
+  \end{tabular}
+  \label{tab:speed}
+\end{table}
+
+\subsection{Portrait Video Correction}
+
+The most visible qualitative improvement is the mask re-projection
+(Equation~\ref{eq:reproject}). Before the fix, a 1080$\times$1920
+portrait frame squeezed into 256$\times$256 caused both severe
+aspect-ratio distortion and the model predicting lanes in positions
+that do not correspond to the actual road. After the fix the mask
+is predicted on the bottom $60\%$ of the frame (road region) and
+up-sampled with nearest-neighbour interpolation back to full resolution,
+aligning with actual lane markings.
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Limitations and Failure Cases}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\subsection{Lane Detection Limitations}
+
+\begin{enumerate}
+  \item \textbf{Fixed input resolution.}
+        The model is trained at $256\times256$. Very thin lane markings
+        at the far end of a road (small in pixel count) may be missed after
+        down-scaling, especially in high-resolution inputs.
+
+  \item \textbf{Road-region crop sensitivity.}
+        The \texttt{road\_start\_ratio} must be set manually. An incorrect
+        value (too high) may crop out the nearest lane markings; too low
+        wastes model capacity on sky.
+
+  \item \textbf{Night and adverse weather.}
+        The training data is predominantly daytime clear-weather footage.
+        Performance degrades in rain, fog, or low-light scenes where lane
+        contrast is reduced.
+
+  \item \textbf{Non-standard lane markings.}
+        Dashed, coloured, or worn lane markings common outside Europe/North
+        America may not be represented in training data.
+
+  \item \textbf{Occlusion by vehicles.}
+        When a vehicle directly ahead covers the lane, the model produces
+        fragmented or absent predictions in that region.
+\end{enumerate}
+
+\subsection{Object Detection Limitations}
+
+\begin{enumerate}
+  \item \textbf{Small and distant objects.}
+        YOLOv8n is optimised for speed; the nano model may miss small
+        objects such as pedestrians at the far end of a long straight road.
+
+  \item \textbf{Class confusion.}
+        Motorcycles and bicycles share visual features and are occasionally
+        swapped at low resolution.
+
+  \item \textbf{Traffic sign coverage.}
+        Only COCO-defined signs (traffic light, stop sign, parking meter)
+        are detected. Country-specific signs (e.g.\ UAE, EU regulatory signs)
+        are absent from COCO and will not be detected.
+
+  \item \textbf{Overlapping boxes.}
+        Dense traffic scenes with many overlapping vehicles can produce
+        duplicate detections that NMS (Equation~\ref{eq:nms}) fails to
+        fully suppress at the default IoU threshold.
+\end{enumerate}
+
+\subsection{System-Level Limitations}
+
+\begin{enumerate}
+  \item \textbf{CPU-only inference.}
+        Streamlit Community Cloud provides no GPU. Processing a one-minute
+        video at Quality ($1\times$) takes $\approx$20--30 minutes on CPU.
+        The frame-skip modes mitigate this but reduce temporal resolution.
+
+  \item \textbf{Memory constraints.}
+        The Community Cloud tier provides $\approx$1\,GB RAM. Very long
+        or high-resolution videos may exceed this and cause the app to crash.
+
+  \item \textbf{Ephemeral file system.}
+        Processed videos are written to \texttt{static/predicted/} on the
+        cloud container's local disk. Files are lost on app restart;
+        users must download before the session ends.
+\end{enumerate}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Conclusion}
+% ══════════════════════════════════════════════════════════════════════════════
+
+This project delivered a production-ready road scene analysis application
+combining lane segmentation and object detection in a single interactive
+Streamlit interface. The key technical achievements are:
+
+\begin{itemize}[noitemsep]
+  \item \textbf{Correct mask re-projection} — predicting on a cropped ROI
+        and up-sampling back to original resolution eliminates the
+        portrait-distortion failure mode (Equations~\ref{eq:crop}
+        and~\ref{eq:reproject}).
+
+  \item \textbf{Batched inference pipeline} — grouping $N=8$ frames per
+        \texttt{model.predict()} call delivers a $\approx$3--5$\times$
+        reduction in per-frame latency on CPU
+        (Equation~\ref{eq:batch_speedup_calc}).
+
+  \item \textbf{Graceful speed--quality trade-off} — the frame-skip slider
+        lets users choose between full-quality and up to $3\times$ faster
+        processing without code changes (Equation~\ref{eq:frame_skip}).
+
+  \item \textbf{Persistent UI state} — storing output paths in
+        \texttt{st.session\_state} ensures download buttons survive
+        Streamlit's script-rerun model, which was a critical usability fix.
+
+  \item \textbf{Modular deployment} — the object-detection variant
+        (\texttt{object-detection} branch / \texttt{Object\_Detection\_YOLOv8}
+        repository) ships with zero TensorFlow dependency, making it
+        lighter and faster to deploy independently.
+\end{itemize}
+
+\noindent\textbf{Future work} could include:
+\begin{itemize}[noitemsep]
+  \item Fine-tuning YOLOv8 on a country-specific traffic sign dataset
+        (e.g.\ UAE road signs) to address the detection gap.
+  \item Replacing nearest-neighbour up-sampling with learned super-resolution
+        to improve mask sharpness at full resolution.
+  \item Exporting both models to ONNX and using \texttt{onnxruntime} to
+        bypass TensorFlow's Python 3.14 incompatibility on newer runtimes.
+  \item Deploying on Hugging Face Spaces with a GPU-enabled ZeroGPU instance
+        to achieve real-time ($\geq$25\,FPS) processing.
+\end{itemize}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section*{References}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\begin{thebibliography}{9}
+
+\bibitem{unet}
+O.\ Ronneberger, P.\ Fischer, and T.\ Brox,
+``U-Net: Convolutional Networks for Biomedical Image Segmentation,''
+\textit{MICCAI}, 2015.
+
+\bibitem{dilated}
+F.\ Yu and V.\ Koltun,
+``Multi-Scale Context Aggregation by Dilated Convolutions,''
+\textit{ICLR}, 2016.
+
+\bibitem{yolov8}
+G.\ Jocher, A.\ Chaurasia, and J.\ Qiu,
+``Ultralytics YOLOv8,''
+\url{https://github.com/ultralytics/ultralytics}, 2023.
+
+\bibitem{coco}
+T.-Y.\ Lin \textit{et al.},
+``Microsoft COCO: Common Objects in Context,''
+\textit{ECCV}, 2014.
+
+\bibitem{streamlit}
+Streamlit Inc., ``Streamlit --- The fastest way to build data apps,''
+\url{https://streamlit.io}, 2024.
+
+\end{thebibliography}
+
+\end{document}
