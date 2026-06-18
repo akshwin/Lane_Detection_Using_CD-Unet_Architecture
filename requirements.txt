@@ -1,7 +1,9 @@
-numpy
+numpy<2.0
 pandas
 matplotlib
-keras
-tensorflow
+tensorflow==2.17.0
 Pillow
+opencv-python-headless
+ultralytics
+streamlit
 ipython
